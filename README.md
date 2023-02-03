@@ -1,9 +1,9 @@
-# ArControl-covert2-nwb
+# ArControl-convert2-nwb
 Convert ArControl behavioral data to "Neurodata Without Borders" nwb file.
 
 ## Install
 Setup the python enviroment.
-> pip install -U git+https://github.com/chenxinfeng4/ArControl-covert2-nwb
+> pip install -U git+https://github.com/chenxinfeng4/ArControl-convert2-nwb
 
 ## Convert file
 The easiest way.
