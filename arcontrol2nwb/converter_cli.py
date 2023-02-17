@@ -1,15 +1,23 @@
 # python BF_arc2nwb.py 2022-1113-224711.txt
-import re
 import sys
-import os.path as osp
+import os
 import re
+import warnings
+
 import numpy as np
 from datetime import datetime
+try:
+    import ndx_beadl
+    NDX_BEADL_AVAILABLE = True
+except ImportError:
+    NDX_BEADL_AVAILABLE = False
+    warnings.warn("ndx-beadl not installed.")
 from pynwb.epoch import TimeIntervals
 from pynwb import NWBFile, TimeSeries, NWBHDF5IO
-from pynwb.behavior import (
-    BehavioralEvents,
-)  # TODO:  TEST:  Check for behavior files that have been deprecated.
+from pynwb.behavior import (BehavioralEvents)
+
+from ndx_beadl import (Task, TaskProgram, TaskSchema, EventTypesTable, EventsTable,
+                       StateTypesTable, StatesTable, TrialsTable, ActionTypesTable, ActionsTable, TaskArgumentsTable)
 
 """
 Convert arcontrol_data.TXT to arcontrol_data.MAT. Just like "BF_arc2mat.m".
@@ -18,21 +26,26 @@ $ pip install mat4py
 $ pyinstaller BF_arcmat.py
 """
 
-def txt2MATdict(filetxt):
+
+def parse(arc_data_filename: str):
     """
-    Convert arcontrol_data.TXT to arcontrol_data.nwb. Just like "BF_arc2nwb.m"
-    :param filetxt:
-    :return: None
+    Convert arcontrol_data.TXT to MAT-style dictionary. Just like "BF_arc2nwb.m"
+
+    :param arc_data_filename: Name of the arcontrol output txt data file
+
+    :return: Dict containing: 1) 'info' key with a dict of all the states and events
+             and their corresponding description, 2) keys of all the events an states
+             with the timing arrays .
     """
 
-    # header #
+    # parse the header with the state and event definitions
     expression_header = re.compile('^@(IN\d+|OUT\d+|C\d+|C\d+S\d+):(.*)$')
     expression_taskname = re.compile('^-----(\w+)-----$')
     expression_arcbg  = re.compile(r'^ArC-bg$')
     MAT = {}
     MAT['info'] = {}
     isokfile = False
-    for str in open(filetxt):
+    for str in open(arc_data_filename):
         res_header = re.findall(expression_header, str)
         res_taskname = re.findall(expression_taskname, str)
         res_arcbg = re.findall(expression_arcbg, str)
@@ -46,9 +59,9 @@ def txt2MATdict(filetxt):
             break
     assert isokfile,  "It's NOT a data file from ArControl!"
 
-    # data #
+    # parse the data with the event timings
     expression = re.compile('^(IN\d+|OUT\d+|C\d+S\d+):(\w.*)$')
-    for str in open(filetxt):
+    for str in open(arc_data_filename):
         res_expression = re.findall(expression, str)
         if res_expression:
             style, nums = res_expression[0]
@@ -58,29 +71,102 @@ def txt2MATdict(filetxt):
     return MAT
 
 
-def convert(filetxt):
+def arc2dict(arc_data_filename: str,
+             arc_taskprogram_filename: str = None):
+    """
+    Convert arcontrol_data.TXT to a data dictionary.
+
+    In contrast to the parse function, the dict is further processed via the
+    __cs_append_duration and __c_create functions and the session_start_time is added.
+
+    :param arc_data_filename: Name of the arcontrol output txt data file
+    :param arc_taskprogram_filename: Path to the ARControl task program (Optional)
+
+    :return: Dict containing: 1) 'info' key with a dict of all the states and events
+             and their corresponding description, 2) keys of all the events an states
+             with the timing arrays, 3) 'session_start_time' with the datetime of the session start.
+    """
     # read raw from txt
-    MAT = txt2MATdict(filetxt)
-    filenyb = osp.splitext(filetxt)[0] + '.nwb'
+    MAT = parse(arc_data_filename)
+
+    # session start time
+    MAT['session_start_time'] = get_session_start_time(arc_data_filename=arc_data_filename)
+
+    # Add the task program
+    MAT['info']['task_program'] = None
+    if arc_taskprogram_filename is not None:
+        with open(arc_taskprogram_filename) as f:
+            MAT['info']['task_program'] = f.read()
+
+    # Add the task schema
+    MAT['info']['task_schema'] = None   # TODO add the task schema
+
+    # TODO parse trial structure and add to the MAT dict if possible
 
     # append duration to CxSx, create component records
-    cs_append_duration(MAT)
-    c_create(MAT)
+    __cs_append_duration(MAT)
+    __c_create(MAT)
+
+    return MAT
+
+
+def get_session_start_time(arc_data_filename: str):
+    """
+    Get the session start time based on the name of arccontrol data file
+
+    :param arc_data_filename:
+    :return: datatime object with the session_start_time
+    """
+    filetime_str = os.path.splitext(os.path.basename(arc_data_filename))[0]
+    return datetime.strptime(filetime_str, "%Y-%m%d-%H%M%S").astimezone()
+
+
+def convert(
+        arc_data_filename: str,
+        arc_taskprogram_filename: str = None,
+        nwb_filename: str = None,
+        append_to_nwb_file: bool = False,
+        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE):
+    """
+    Convert an ARControl recording to NWB
+
+    :param arc_data_filename: Path to the  arcontrol_data.TXT data file
+    :param arc_taskprogram_filename: Path to the ARControl task program
+    :param nwb_filename: Name of the NWB file to write. If None, then the NWB file will be named
+                     according to the arc_data_filename.
+    :param append_to_nwb_file: If the NWB file exists, should we append to it (True) or overwrite the file (False)
+    :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension in NWB
+
+    :return: Dictionary generated by the parse function
+    """
+    MAT = arc2dict(arc_data_filename=arc_data_filename,
+                   arc_taskprogram_filename=arc_taskprogram_filename)
 
     # save to file #
-    savenwb(filenyb, MAT)
+    savenwb(nwb_filename=nwb_filename if nwb_filename is not None else os.path.splitext(arc_data_filename)[0] + '.nwb',
+            append_to_nwb_file=append_to_nwb_file,
+            MAT=MAT,
+            use_ndx_beadl=use_ndx_beadl)
+
+    return MAT
 
 
-def cs_append_duration(MAT):
+def __cs_append_duration(MAT: dict):
+    """
+    Process the MAT dict produced by the parse function to append control state durations
+
+    :param MAT: Data dictionary produced by the parse function
+    :return: MAT dictionary with the updated data
+    """
     CS_pattern = re.compile('^C\d+S\d+$')
     CS_event_mm = {CS: np.array(v) for CS, v in MAT.items()
                     if CS_pattern.match(CS)}
-    
+
     T_seq = np.squeeze(np.concatenate([v for v in CS_event_mm.values()]))
     assert T_seq.ndim==1
     T_seq.sort()
     T_seq_ext = np.append(T_seq, T_seq[-1])
-    CS_end_mm={e: T_seq_ext[np.searchsorted(T_seq, v.flatten(), 'right')] 
+    CS_end_mm={e: T_seq_ext[np.searchsorted(T_seq, v.flatten(), 'right')]
                             for e, v in CS_event_mm.items()}
     csdata_dict = dict()
     for e in CS_event_mm:
@@ -88,16 +174,21 @@ def cs_append_duration(MAT):
         t_end = CS_end_mm[e]
         t_dur = t_end - t_bg
         csdata_dict[e]= np.stack([t_bg, t_dur]).T
-    
+
     MAT.update(csdata_dict)
     MAT['info'].setdefault('C0S0', 'End session')
 
 
-def c_create(MAT):
+def __c_create(MAT:dict):
+    """
+
+    :param MAT: Data dictionary produced by the parse function
+    :return: MAT dictionary with the updated data
+    """
     CS_pattern = re.compile('^C\d+S\d+$')
     CS_event_mm = {CS: np.array(v) for CS, v in MAT.items()
                     if CS_pattern.match(CS)}
-    
+
     T_seq = []
     c_seq = []
     for e, v in CS_event_mm.items():
@@ -134,78 +225,219 @@ def c_create(MAT):
     MAT['info'].setdefault('C0', 'End session')
 
 
-def savenwb(filenyb, MAT):
-    filetime_str = osp.splitext(osp.basename(filenyb))[0]
-    session_start_time = datetime.strptime(filetime_str, "%Y-%m%d-%H%M%S")
+def savenwb(MAT: dict,
+            nwb_filename: str,
+            append_to_nwb_file: bool = False,
+            use_behavioral_time_series: bool = not NDX_BEADL_AVAILABLE,
+            use_ndx_beadl: bool = NDX_BEADL_AVAILABLE):
+    """
+    Save the MAT data dict generated by the
 
+    Typically, only one of use_ndx_beadl or use_behavioral_time_series should be set to True.
+    While using both options is valid, it results in duplication of the data in the NWBFile in
+    that the data will be stored both using the ndx-beadl data types and as standard time series
+    and time intervals.
+
+    :param nwb_filename: Name of the NWB file to write
+    :param append_to_nwb_file: If the NWB file exists, should we append to it (True) or overwrite the file (False)
+    :param MAT: Dictionary generated by arc2dict function
+    :param use_behavioral_time_series: Boolean indicating whether to use behavioral timeseries to store the data
+    :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension
+    """
+    if use_ndx_beadl and not NDX_BEADL_AVAILABLE:
+        raise ValueError("The ndx-beadl extensions is not available. "
+                         "Install the extension and try again or set use_ndx_beadl=False")
+    if not use_ndx_beadl and not use_behavioral_time_series:
+        raise ValueError("Either use_ndx_beadl and/or use_behavioral_time_series must be set to True")
+
+    session_start_time = MAT['session_start_time']
     task_name = MAT['info']['task']
+    task_program = MAT['info']['task_program']
+    task_schema = MAT['info']['task_schema']
 
-    nwbfile = NWBFile(
-        session_description=task_name,  # required
-        identifier=task_name+"."+filetime_str,  # required
-        session_start_time=session_start_time,  # required
-        experimenter="ArControl behavior recorder",  # optional
-    )
-    behavior_module = nwbfile.create_processing_module(
-        name="behavior", description="Raw ArControl event"
-    )
-    behavioral_events = BehavioralEvents(name="BehavioralEvents")
-    IO_event = {IO: np.array(v)/1000 for IO, v in MAT.items() 
-                    if 'IN' in IO or 'OUT' in IO}  # process IO time as sec
+    # IO_event = {IO: np.array(v) / 1000 for IO, v in MAT.items()
+    #                 if 'IN' in IO or 'OUT' in IO}  # process output IO time as sec
+    IO_IN_events = {IO: np.array(v) / 1000 for IO, v in MAT.items()
+                    if 'IN' in IO}  # process input IO time as sec
+    IO_OUT_actions = {IO: np.array(v) / 1000 for IO, v in MAT.items()
+                      if 'OUT' in IO}  # process output IO time as sec
     CS_pattern = re.compile('(^C\d+S\d+$)|(^C\d+$)')
-    CS_event = {CS: np.array(v)/1000 for CS, v in MAT.items()
-                    if CS_pattern.match(CS)}  # process CS time as sec
-    world_event = (IO_event|CS_event)
+    CS_events = {CS: np.array(v) / 1000 for CS, v in MAT.items()
+                 if CS_pattern.match(CS)}  # process CS time as sec
+    state_types = {k: v for k, v in MAT['info'].items() if CS_pattern.match(k)}
+    event_types = {k: v for k, v in MAT['info'].items() if 'IN' in k}
+    action_types = {k: v for k, v in MAT['info'].items() if 'OUT' in k}
+    world_event = (IO_IN_events | IO_OUT_actions | CS_events) # (IO_event | CS_events)
     assert world_event.keys() <= MAT['info'].keys()
 
-    time_len = max([v[-1,0]+v[-1,1] for v in world_event.values()])
+    time_len = max([v[-1, 0] + v[-1, 1] for v in world_event.values()])
 
-    s1 = TimeIntervals(
-            name="ArControl_Events",
-            description="intervals for each event",
+    # Open the existing NWB file or create a new NWB file for write
+    # Append to an existing NWB file
+    if os.path.isfile(nwb_filename) and append_to_nwb_file:
+        nwb_io = NWBHDF5IO(nwb_filename, "a")
+        nwbfile = nwb_io.read()
+        # If the reference time of the NWB file is different than the session start time of
+        # the ARControl file then we need to adjust timestamps accordingly
+        time_offset = (session_start_time - nwbfile.timestamps_reference_time).total_seconds()
+    # Create a new NWBFile to write to
+    else:
+        nwb_io =  NWBHDF5IO(nwb_filename, "w")
+        nwbfile = NWBFile(
+            session_description=task_name,  # required
+            identifier=task_name+"."+str(session_start_time),  # required
+            session_start_time=session_start_time,  # required
+            experimenter="ArControl behavior recorder",  # optional
         )
-    s1.add_column(name="event", description="I/O and State events")
-    for e, v in world_event.items():
-        for start_t, dur_t in v:
-            s1.add_row(start_time=start_t, 
-                        stop_time=start_t+dur_t, 
-                        event=e)
-    _ = nwbfile.add_time_intervals(s1)
+        time_offset = 0
 
-    for e, v in world_event.items():
-        tbg_pre, tend=v[:,0], v[:,0]+v[:,1]
-        ddt = 0.0001
-        tend[tend==tbg_pre] += ddt
-        tbg =  tbg_pre + ddt
-        tend_post = tend + ddt
-        seq_t_1 = np.concatenate((tbg, tend))
-        seq_t_0 = np.concatenate((tbg_pre, tend_post))
-        seq_v_1 = np.ones(seq_t_1.shape)
-        seq_v_0 = np.zeros(seq_t_0.shape)
-        seq_t = np.concatenate((seq_t_0, seq_t_1, [time_len+ddt]))
-        seq_v = np.concatenate((seq_v_0, seq_v_1, [0]))
-        if not np.any(seq_t==0.0):
-            seq_t = np.append(seq_t, 0.0)
-            seq_v = np.append(seq_v, 0)
-
-        argind = np.argsort(seq_t)
-        timestamps = seq_t[argind]
-        data = seq_v[argind]
-
-        time_series = TimeSeries(
-            name=e,
-            data=data,
-            timestamps=timestamps,
-            comments=MAT['info'][e],
-            description=MAT['info'][e],
-            unit = "TTL",
+    # Add the data to the NWBFile using BehavioralTimeSeries and TimeIntervals
+    if use_behavioral_time_series:
+        behavior_module = nwbfile.create_processing_module(
+            name="behavior", description="Raw ArControl event"
         )
-        behavioral_events.add_timeseries(time_series)
-    
-    behavior_module.add(behavioral_events)
+        behavioral_events = BehavioralEvents(name="BehavioralEvents")
 
-    with NWBHDF5IO(filenyb, "w") as io:
-        io.write(nwbfile)
+        s1 = TimeIntervals(
+                name="ArControl_Events",
+                description="intervals for each event",
+            )
+        s1.add_column(name="event", description="I/O and State events")
+        for e, v in world_event.items():
+            for start_t, dur_t in v:
+                s1.add_row(start_time=start_t + time_offset,
+                           stop_time=start_t + time_offset + dur_t,
+                           event=e)
+        _ = nwbfile.add_time_intervals(s1)
+
+        for e, v in world_event.items():
+            tbg_pre, tend=v[:,0], v[:,0]+v[:,1]
+            ddt = 0.0001
+            tend[tend==tbg_pre] += ddt
+            tbg =  tbg_pre + ddt
+            tend_post = tend + ddt
+            seq_t_1 = np.concatenate((tbg, tend))
+            seq_t_0 = np.concatenate((tbg_pre, tend_post))
+            seq_v_1 = np.ones(seq_t_1.shape)
+            seq_v_0 = np.zeros(seq_t_0.shape)
+            seq_t = np.concatenate((seq_t_0, seq_t_1, [time_len+ddt]))
+            seq_v = np.concatenate((seq_v_0, seq_v_1, [0]))
+            if not np.any(seq_t==0.0):
+                seq_t = np.append(seq_t, 0.0)
+                seq_v = np.append(seq_v, 0)
+
+            argind = np.argsort(seq_t)
+            timestamps = seq_t[argind] + time_offset
+            data = seq_v[argind]
+
+            time_series = TimeSeries(
+                name=e,
+                data=data,
+                timestamps=timestamps,
+                comments=MAT['info'][e],
+                description=MAT['info'][e],
+                unit = "TTL",
+            )
+            behavioral_events.add_timeseries(time_series)
+
+        behavior_module.add(behavioral_events)
+
+    # Add the data to the file using the NDX BEADL extension
+    if use_ndx_beadl:
+        # Define the task schema
+        task_schema = TaskSchema(
+            name='task_schema',
+            data=task_schema if task_schema is not None else "",
+            version="0.1.0",
+            language="XSD"
+        )
+
+        # Define the task program
+        task_program = TaskProgram(
+            name='task_program',
+            data=task_program if task_program is not None else "",
+            schema=task_schema,
+            language="XML"
+        )
+
+        # Define task arguments
+        task_arg_table = TaskArgumentsTable() # TODO: Populate the TaskArgumentsTable
+
+        # define the state types table
+        state_types_table = StateTypesTable(description="ARControl control states")
+        state_types_table.add_column(name='state_label', description='ARControl control state label')
+        for state_name, state_label in state_types.items():
+            state_types_table.add_row(state_name=state_name, state_label=state_label)
+
+        # define the events types table
+        event_types_table = EventTypesTable(description="ARControl input events")
+        event_types_table.add_column(name='event_label', description='ARControl event label')
+        for event_name, event_label in event_types.items():
+            event_types_table.add_row(event_name=event_name, event_label=event_label)
+
+        # define the actions types table
+        action_types_table = ActionTypesTable(description="ARControl output actions")
+        action_types_table.add_column(name='action_label', description='ARControl ouput actions label')
+        for action_name, action_label in action_types.items():
+            action_types_table.add_row(action_name=action_name, action_label=action_label)
+
+        # define the task
+        task = Task(
+            task_program=task_program,
+            task_schema=task_schema,
+            event_types=event_types_table,
+            state_types=state_types_table,
+            action_types=action_types_table,
+            task_arguments=task_arg_table
+        )
+        nwbfile.add_lab_meta_data(task)
+
+        # TODO The original conversion code (lines 314 - 344) applies additional transformations to the timestamps. Check whether we also need to do those here.
+        # TODO sort events_table, actions_table, and states_table by timestamps
+        # define the events table
+        events_table = EventsTable(
+            description="ARControl input events acquired during the experiment",
+            event_types_table=event_types_table)
+        events_table.add_column(name='duration', description='ARControl input event duration')
+        event_name_index = {e: i for i, e in enumerate(event_types_table['event_name'])}
+        for event_name, event_times in IO_IN_events.items():
+            event_index = event_name_index[event_name]
+            for timerange in event_times:
+                events_table.add_row(event_type=event_index, value="", timestamp=timerange[0], duration=timerange[1])
+        nwbfile.add_acquisition(events_table)
+
+        # define the actions table
+        actions_table = ActionsTable(
+            description="ARControl output actions acquired during the experiment",
+            action_types_table=action_types_table)
+        actions_table.add_column(name='duration', description='ARControl output actions duration')
+        action_name_index = {a: i for i, a in enumerate(action_types_table['action_name'])}
+        for action_name, action_times in IO_OUT_actions.items():
+            action_index = action_name_index[action_name]
+            for timerange in action_times:
+                actions_table.add_row(action_type=action_index, value="", timestamp=timerange[0], duration=timerange[1])
+        nwbfile.add_acquisition(actions_table)
+
+        # define the states table
+        states_table = StatesTable(
+            description="ARControl states  acquired during the experiment",
+            state_types_table=state_types_table)
+        state_name_index = {e: i for i, e in enumerate(state_types_table['state_name'])}
+        for state_name, state_times in CS_events.items():
+            state_index = state_name_index[state_name]
+            for timerange in state_times:
+                states_table.add_row(state_type=state_index, start_time=timerange[0], stop_time=timerange[0]+timerange[1])
+        nwbfile.add_acquisition(states_table)
+
+        # TODO define and populate the TrialsTable. The trials do not appear to be parsed from the ARControl file yet
+        # trials = TrialsTable(description="ARControl behavioral trials ",
+        #                      states_table=states_table,
+        #                      events_table=events_table,
+        #                      actions_table=actions_table)
+        # nwbfile.trials = trials  # TODO check that there is no existing trials table that we should append to
+
+    nwb_io.write(nwbfile)
+    nwb_io.close()
 
 
 if __name__ == '__main__':
