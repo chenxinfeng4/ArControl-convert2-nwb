@@ -445,7 +445,7 @@ def savenwb(MAT: dict,
                                      stop_time=timerange[0] + timerange[1])
         nwbfile.add_acquisition(states_table)
 
-        # TODO define and populate the TrialsTable. The trials do not appear to be parsed from the ARControl file yet
+        # TODO define and populate the TrialsTable. Trials should be defined by transitions between components indicated by the prefix of the name of the state
         # trials = TrialsTable(description="ARControl behavioral trials ",
         #                      states_table=states_table,
         #                      events_table=events_table,
