@@ -403,7 +403,7 @@ def savenwb(MAT: dict,
         for event_name, event_times in IO_IN_events.items():
             event_index = event_name_index[event_name]
             for timerange in event_times:
-                events_table.add_row(event_type=event_index, value="", timestamp=timerange[0], duration=timerange[1])
+                events_table.add_row(event_type=event_index, value="", timestamp=timerange[0] + time_offset, duration=timerange[1])
         nwbfile.add_acquisition(events_table)
 
         # define the actions table
@@ -415,7 +415,7 @@ def savenwb(MAT: dict,
         for action_name, action_times in IO_OUT_actions.items():
             action_index = action_name_index[action_name]
             for timerange in action_times:
-                actions_table.add_row(action_type=action_index, value="", timestamp=timerange[0], duration=timerange[1])
+                actions_table.add_row(action_type=action_index, value="", timestamp=timerange[0] + time_offset, duration=timerange[1])
         nwbfile.add_acquisition(actions_table)
 
         # define the states table
@@ -426,7 +426,7 @@ def savenwb(MAT: dict,
         for state_name, state_times in CS_events.items():
             state_index = state_name_index[state_name]
             for timerange in state_times:
-                states_table.add_row(state_type=state_index, start_time=timerange[0], stop_time=timerange[0]+timerange[1])
+                states_table.add_row(state_type=state_index, start_time=timerange[0] + time_offset, stop_time=timerange[0]+timerange[1])
         nwbfile.add_acquisition(states_table)
 
         # TODO define and populate the TrialsTable. The trials do not appear to be parsed from the ARControl file yet
