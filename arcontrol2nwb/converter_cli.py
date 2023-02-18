@@ -7,17 +7,28 @@ import warnings
 import numpy as np
 from datetime import datetime
 try:
-    import ndx_beadl
+    from ndx_beadl import (
+        Task,
+        TaskProgram,
+        TaskSchema,
+        EventTypesTable,
+        EventsTable,
+        StateTypesTable,
+        StatesTable,
+        # TrialsTable,
+        ActionTypesTable,
+        ActionsTable,
+        TaskArgumentsTable)
     NDX_BEADL_AVAILABLE = True
 except ImportError:
     NDX_BEADL_AVAILABLE = False
     warnings.warn("ndx-beadl not installed.")
 from pynwb.epoch import TimeIntervals
-from pynwb import NWBFile, TimeSeries, NWBHDF5IO
-from pynwb.behavior import (BehavioralEvents)
-
-from ndx_beadl import (Task, TaskProgram, TaskSchema, EventTypesTable, EventsTable,
-                       StateTypesTable, StatesTable, TrialsTable, ActionTypesTable, ActionsTable, TaskArgumentsTable)
+from pynwb import (
+    NWBFile,
+    TimeSeries,
+    NWBHDF5IO)
+from pynwb.behavior import BehavioralEvents
 
 """
 Convert arcontrol_data.TXT to arcontrol_data.MAT. Just like "BF_arc2mat.m".
@@ -41,7 +52,7 @@ def parse(arc_data_filename: str):
     # parse the header with the state and event definitions
     expression_header = re.compile('^@(IN\d+|OUT\d+|C\d+|C\d+S\d+):(.*)$')
     expression_taskname = re.compile('^-----(\w+)-----$')
-    expression_arcbg  = re.compile(r'^ArC-bg$')
+    expression_arcbg = re.compile(r'^ArC-bg$')
     MAT = {}
     MAT['info'] = {}
     isokfile = False
@@ -160,26 +171,26 @@ def __cs_append_duration(MAT: dict):
     """
     CS_pattern = re.compile('^C\d+S\d+$')
     CS_event_mm = {CS: np.array(v) for CS, v in MAT.items()
-                    if CS_pattern.match(CS)}
+                   if CS_pattern.match(CS)}
 
     T_seq = np.squeeze(np.concatenate([v for v in CS_event_mm.values()]))
-    assert T_seq.ndim==1
+    assert T_seq.ndim == 1
     T_seq.sort()
     T_seq_ext = np.append(T_seq, T_seq[-1])
-    CS_end_mm={e: T_seq_ext[np.searchsorted(T_seq, v.flatten(), 'right')]
-                            for e, v in CS_event_mm.items()}
+    CS_end_mm = {e: T_seq_ext[np.searchsorted(T_seq, v.flatten(), 'right')]
+                 for e, v in CS_event_mm.items()}
     csdata_dict = dict()
     for e in CS_event_mm:
-        t_bg = CS_event_mm[e][:,0]
+        t_bg = CS_event_mm[e][:, 0]
         t_end = CS_end_mm[e]
         t_dur = t_end - t_bg
-        csdata_dict[e]= np.stack([t_bg, t_dur]).T
+        csdata_dict[e] = np.stack([t_bg, t_dur]).T
 
     MAT.update(csdata_dict)
     MAT['info'].setdefault('C0S0', 'End session')
 
 
-def __c_create(MAT:dict):
+def __c_create(MAT: dict):
     """
 
     :param MAT: Data dictionary produced by the parse function
@@ -187,13 +198,13 @@ def __c_create(MAT:dict):
     """
     CS_pattern = re.compile('^C\d+S\d+$')
     CS_event_mm = {CS: np.array(v) for CS, v in MAT.items()
-                    if CS_pattern.match(CS)}
+                   if CS_pattern.match(CS)}
 
     T_seq = []
     c_seq = []
     for e, v in CS_event_mm.items():
-        T_seq.extend(v[:,0].tolist())
-        c_seq.extend([e]*len(v[:,0]))
+        T_seq.extend(v[:, 0].tolist())
+        c_seq.extend([e]*len(v[:, 0]))
     T_seq = np.array(T_seq)
     c_seq = np.array(c_seq)
     argsort_ind = np.argsort(T_seq)
@@ -202,9 +213,9 @@ def __c_create(MAT:dict):
     comp_name_l, comp_switch_l = [], []
     comp_name_now = ''
     for cs1_name, T in zip(c_seq, T_seq):
-        if cs1_name.split('S')[1]!='1' and cs1_name!='C0S0':
+        if cs1_name.split('S')[1] != '1' and cs1_name != 'C0S0':
             continue
-        if cs1_name!=comp_name_now:
+        if cs1_name != comp_name_now:
             comp_name_l.append(cs1_name)
             comp_switch_l.append(T)
             comp_name_now = cs1_name
@@ -218,7 +229,7 @@ def __c_create(MAT:dict):
     cdata_dict = dict()
     for cs1_name in comp_name_l:
         comp_name = cs1_name.split('S')[0]
-        comp_bg_dur = comp_bg_dur_l[comp_name_l==cs1_name]
+        comp_bg_dur = comp_bg_dur_l[comp_name_l == cs1_name]
         cdata_dict[comp_name] = comp_bg_dur
 
     MAT.update(cdata_dict)
@@ -255,8 +266,6 @@ def savenwb(MAT: dict,
     task_program = MAT['info']['task_program']
     task_schema = MAT['info']['task_schema']
 
-    # IO_event = {IO: np.array(v) / 1000 for IO, v in MAT.items()
-    #                 if 'IN' in IO or 'OUT' in IO}  # process output IO time as sec
     IO_IN_events = {IO: np.array(v) / 1000 for IO, v in MAT.items()
                     if 'IN' in IO}  # process input IO time as sec
     IO_OUT_actions = {IO: np.array(v) / 1000 for IO, v in MAT.items()
@@ -267,7 +276,7 @@ def savenwb(MAT: dict,
     state_types = {k: v for k, v in MAT['info'].items() if CS_pattern.match(k)}
     event_types = {k: v for k, v in MAT['info'].items() if 'IN' in k}
     action_types = {k: v for k, v in MAT['info'].items() if 'OUT' in k}
-    world_event = (IO_IN_events | IO_OUT_actions | CS_events) # (IO_event | CS_events)
+    world_event = (IO_IN_events | IO_OUT_actions | CS_events)
     assert world_event.keys() <= MAT['info'].keys()
 
     time_len = max([v[-1, 0] + v[-1, 1] for v in world_event.values()])
@@ -282,7 +291,7 @@ def savenwb(MAT: dict,
         time_offset = (session_start_time - nwbfile.timestamps_reference_time).total_seconds()
     # Create a new NWBFile to write to
     else:
-        nwb_io =  NWBHDF5IO(nwb_filename, "w")
+        nwb_io = NWBHDF5IO(nwb_filename, "w")
         nwbfile = NWBFile(
             session_description=task_name,  # required
             identifier=task_name+"."+str(session_start_time),  # required
@@ -311,10 +320,10 @@ def savenwb(MAT: dict,
         _ = nwbfile.add_time_intervals(s1)
 
         for e, v in world_event.items():
-            tbg_pre, tend=v[:,0], v[:,0]+v[:,1]
+            tbg_pre, tend = v[:, 0], v[:, 0]+v[:, 1]
             ddt = 0.0001
-            tend[tend==tbg_pre] += ddt
-            tbg =  tbg_pre + ddt
+            tend[tend == tbg_pre] += ddt
+            tbg = tbg_pre + ddt
             tend_post = tend + ddt
             seq_t_1 = np.concatenate((tbg, tend))
             seq_t_0 = np.concatenate((tbg_pre, tend_post))
@@ -322,7 +331,7 @@ def savenwb(MAT: dict,
             seq_v_0 = np.zeros(seq_t_0.shape)
             seq_t = np.concatenate((seq_t_0, seq_t_1, [time_len+ddt]))
             seq_v = np.concatenate((seq_v_0, seq_v_1, [0]))
-            if not np.any(seq_t==0.0):
+            if not np.any(seq_t == 0.0):
                 seq_t = np.append(seq_t, 0.0)
                 seq_v = np.append(seq_v, 0)
 
@@ -336,7 +345,7 @@ def savenwb(MAT: dict,
                 timestamps=timestamps,
                 comments=MAT['info'][e],
                 description=MAT['info'][e],
-                unit = "TTL",
+                unit="TTL",
             )
             behavioral_events.add_timeseries(time_series)
 
@@ -361,7 +370,7 @@ def savenwb(MAT: dict,
         )
 
         # Define task arguments
-        task_arg_table = TaskArgumentsTable() # TODO: Populate the TaskArgumentsTable
+        task_arg_table = TaskArgumentsTable()  # TODO: Populate the TaskArgumentsTable
 
         # define the state types table
         state_types_table = StateTypesTable(description="ARControl control states")
@@ -392,7 +401,7 @@ def savenwb(MAT: dict,
         )
         nwbfile.add_lab_meta_data(task)
 
-        # TODO The original conversion code (lines 314 - 344) applies additional transformations to the timestamps. Check whether we also need to do those here.
+        # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well
         # TODO sort events_table, actions_table, and states_table by timestamps
         # define the events table
         events_table = EventsTable(
@@ -403,7 +412,9 @@ def savenwb(MAT: dict,
         for event_name, event_times in IO_IN_events.items():
             event_index = event_name_index[event_name]
             for timerange in event_times:
-                events_table.add_row(event_type=event_index, value="", timestamp=timerange[0] + time_offset, duration=timerange[1])
+                events_table.add_row(event_type=event_index, value="",
+                                     timestamp=timerange[0] + time_offset,
+                                     duration=timerange[1])
         nwbfile.add_acquisition(events_table)
 
         # define the actions table
@@ -415,7 +426,10 @@ def savenwb(MAT: dict,
         for action_name, action_times in IO_OUT_actions.items():
             action_index = action_name_index[action_name]
             for timerange in action_times:
-                actions_table.add_row(action_type=action_index, value="", timestamp=timerange[0] + time_offset, duration=timerange[1])
+                actions_table.add_row(action_type=action_index,
+                                      value="",  # TODO does ARControl define values for output actions?
+                                      timestamp=timerange[0] + time_offset,
+                                      duration=timerange[1])
         nwbfile.add_acquisition(actions_table)
 
         # define the states table
@@ -426,7 +440,9 @@ def savenwb(MAT: dict,
         for state_name, state_times in CS_events.items():
             state_index = state_name_index[state_name]
             for timerange in state_times:
-                states_table.add_row(state_type=state_index, start_time=timerange[0] + time_offset, stop_time=timerange[0]+timerange[1])
+                states_table.add_row(state_type=state_index,
+                                     start_time=timerange[0] + time_offset,
+                                     stop_time=timerange[0] + timerange[1])
         nwbfile.add_acquisition(states_table)
 
         # TODO define and populate the TrialsTable. The trials do not appear to be parsed from the ARControl file yet
