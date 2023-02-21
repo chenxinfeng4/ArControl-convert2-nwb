@@ -88,7 +88,7 @@ def arc2dict(arc_data_filename: str,
     Convert arcontrol_data.TXT to a data dictionary.
 
     In contrast to the parse function, the dict is further processed via the
-    __cs_append_duration and __c_create functions and the session_start_time is added.
+    __convert_cs_append_duration and __convert_c_create functions and the session_start_time is added.
 
     :param arc_data_filename: Name of the arcontrol output txt data file
     :param arc_taskprogram_filename: Path to the ARControl task program (Optional)
@@ -115,8 +115,8 @@ def arc2dict(arc_data_filename: str,
     # TODO parse trial structure and add to the MAT dict if possible
 
     # append duration to CxSx, create component records
-    __cs_append_duration(MAT)
-    __c_create(MAT)
+    __convert_cs_append_duration(MAT)
+    __convert_c_create(MAT)
 
     return MAT
 
@@ -165,9 +165,11 @@ def convert(
     return MAT
 
 
-def __cs_append_duration(MAT: dict):
+def __convert_cs_append_duration(MAT: dict):
     """
-    Process the MAT dict produced by the parse function to append control state durations
+    Process the MAT dict produced by the parse function to append control state durations.
+
+    This is an Internal helper function for the convert(...) function.
 
     :param MAT: Data dictionary produced by the parse function
     :return: MAT dictionary with the updated data
@@ -193,8 +195,10 @@ def __cs_append_duration(MAT: dict):
     MAT['info'].setdefault('C0S0', 'End session')
 
 
-def __c_create(MAT: dict):
+def __convert_c_create(MAT: dict):  # TODO add description in docstring what this function does?
     """
+
+    This is an Internal helper function for the convert(...) function.
 
     :param MAT: Data dictionary produced by the parse function
     :return: MAT dictionary with the updated data
@@ -243,8 +247,7 @@ def add_arc_to_nwbfile(
         MAT: dict,
         nwbfile: NWBFile,
         use_behavioral_time_series: bool = not NDX_BEADL_AVAILABLE,
-        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE
-):
+        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE):
     """
     Add data to an in-memory NWBFile object. The input nwbfile object is modified but
     writing the data to disk is left (if desired) is left to the caller.
