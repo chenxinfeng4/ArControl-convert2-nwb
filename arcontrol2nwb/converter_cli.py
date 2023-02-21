@@ -267,18 +267,16 @@ def add_arc_to_nwbfile(
     task_program = MAT['info']['task_program']
     task_schema = MAT['info']['task_schema']
 
-    IO_IN_events = {IO: np.array(v) / 1000 for IO, v in MAT.items()
+    io_in_events = {IO: np.array(v) / 1000 for IO, v in MAT.items()
                     if 'IN' in IO}  # process input IO time as sec
-    IO_OUT_actions = {IO: np.array(v) / 1000 for IO, v in MAT.items()
+    io_out_actions = {IO: np.array(v) / 1000 for IO, v in MAT.items()
                       if 'OUT' in IO}  # process output IO time as sec
     CS_pattern = re.compile('(^C\d+S\d+$)|(^C\d+$)')
-    CS_events = {CS: np.array(v) / 1000 for CS, v in MAT.items()
+    cs_events = {CS: np.array(v) / 1000 for CS, v in MAT.items()
                  if CS_pattern.match(CS)}  # process CS time as sec
     state_types = {k: v for k, v in MAT['info'].items() if CS_pattern.match(k)}
     event_types = {k: v for k, v in MAT['info'].items() if 'IN' in k}
     action_types = {k: v for k, v in MAT['info'].items() if 'OUT' in k}
-    world_event = (IO_IN_events | IO_OUT_actions | CS_events)
-    assert world_event.keys() <= MAT['info'].keys()
 
     # Determine the time_offset to use relative to the timestamp_reference time of the NWBFile
     # If the reference time of the NWB file is different than the session start time of
@@ -288,7 +286,9 @@ def add_arc_to_nwbfile(
     if use_behavioral_time_series:
         __add_arc_to_nwbfile_behavioral_series(
             nwbfile=nwbfile,
-            world_event=world_event,
+            io_in_events=io_in_events,
+            io_out_actions=io_out_actions,
+            cs_events=cs_events,
             info=MAT['info'],
             time_offset=time_offset,
         )
@@ -301,9 +301,9 @@ def add_arc_to_nwbfile(
             state_types=state_types,
             event_types=event_types,
             action_types=action_types,
-            IO_IN_events=IO_IN_events,
-            IO_OUT_actions=IO_OUT_actions,
-            CS_events=CS_events,
+            io_in_events=io_in_events,
+            io_out_actions=io_out_actions,
+            cs_events=cs_events,
             time_offset=time_offset
         )
 
@@ -311,12 +311,17 @@ def add_arc_to_nwbfile(
 
 
 def __add_arc_to_nwbfile_behavioral_series(nwbfile: NWBFile,
-                                           world_event: dict,
+                                           io_in_events: dict,
+                                           io_out_actions: dict,
+                                           cs_events: dict,
                                            info: dict,
                                            time_offset: float):
     """
     Add the data to the NWBFile using BehavioralTimeSeries and TimeIntervals
     """
+    world_event = (io_in_events | io_out_actions | cs_events)
+    assert world_event.keys() <= info.keys()
+
     time_len = max([v[-1, 0] + v[-1, 1] for v in world_event.values()])
 
     behavior_module = nwbfile.create_processing_module(
@@ -375,9 +380,9 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
                                    state_types: dict,
                                    event_types: dict,
                                    action_types: dict,
-                                   IO_IN_events: dict,
-                                   IO_OUT_actions: dict,
-                                   CS_events: dict,
+                                   io_in_events: dict,
+                                   io_out_actions: dict,
+                                   cs_events: dict,
                                    time_offset: float):
     """
     Add the data to the NWBFile using the NDX BEADL extension
@@ -438,7 +443,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
         event_types_table=event_types_table)
     events_table.add_column(name='duration', description='ARControl input event duration')
     event_name_index = {e: i for i, e in enumerate(event_types_table['event_name'])}
-    for event_name, event_times in IO_IN_events.items():
+    for event_name, event_times in io_in_events.items():
         event_index = event_name_index[event_name]
         for timerange in event_times:
             events_table.add_row(event_type=event_index, value="",
@@ -452,7 +457,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
         action_types_table=action_types_table)
     actions_table.add_column(name='duration', description='ARControl output actions duration')
     action_name_index = {a: i for i, a in enumerate(action_types_table['action_name'])}
-    for action_name, action_times in IO_OUT_actions.items():
+    for action_name, action_times in io_out_actions.items():
         action_index = action_name_index[action_name]
         for timerange in action_times:
             actions_table.add_row(action_type=action_index,
@@ -466,7 +471,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
         description="ARControl states  acquired during the experiment",
         state_types_table=state_types_table)
     state_name_index = {e: i for i, e in enumerate(state_types_table['state_name'])}
-    for state_name, state_times in CS_events.items():
+    for state_name, state_times in cs_events.items():
         state_index = state_name_index[state_name]
         for timerange in state_times:
             states_table.add_row(state_type=state_index,
