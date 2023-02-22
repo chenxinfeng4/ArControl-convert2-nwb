@@ -589,6 +589,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     curr_state_end_index = 0
     for component_name, start_time, stop_time in sorted(trials, key=lambda t: t[1]):
         # Find the end index for the actions, events, and states within the trial
+        # TODO Multiple  events/actions/states can have the same timestamp. Check that those are assigned correctly.
         for i in range(curr_event_start_index, len(event_timestamps)):
             if event_timestamps[i] >= stop_time:
                 curr_event_end_index = i
