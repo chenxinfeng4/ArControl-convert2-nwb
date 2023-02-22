@@ -530,7 +530,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
 
     # define the states table
     # reformat the states data to flatten the per-state-type timestamp arrays to a single list of timestamps
-    trials = [] # List of tuples with (component_name, start_time, stop_time)
+    trials = []  # List of tuples with (component_name, start_time, stop_time)
     state_types = []
     state_start_times = []
     state_stop_times = []
