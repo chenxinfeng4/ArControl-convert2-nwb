@@ -196,8 +196,9 @@ def __convert_cs_append_duration(MAT: dict):
     MAT['info'].setdefault('C0S0', 'End session')
 
 
-def __convert_c_create(MAT: dict):  # TODO add description in docstring what this function does?
+def __convert_c_create(MAT: dict):
     """
+    TODO: Clarify purpose of this function in the docstring
 
     This is an Internal helper function for the convert(...) function.
 
