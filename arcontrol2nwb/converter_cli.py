@@ -268,7 +268,7 @@ def add_arc_to_nwbfile(
         raise ValueError("Either use_ndx_beadl and/or use_behavioral_time_series must be set to True")
 
     session_start_time = MAT['session_start_time']
-    task_name = MAT['info']['task']  # noqa  TODO where to save task_name if NWBFile exists (append to session description?)
+    # task_name = MAT['info']['task']
     task_program = MAT['info']['task_program']
     task_schema = MAT['info']['task_schema']
 
@@ -644,7 +644,7 @@ def savenwb(MAT: dict,
     :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension
     """
     session_start_time = MAT['session_start_time']
-    task_name = MAT['info']['task']
+    task_name = MAT['info']['task']  # TODO: where to save task_name if NWBFile exists (append to session description?)
 
     # Open the existing NWB file or create a new NWB file for write
     # Append to an existing NWB file
