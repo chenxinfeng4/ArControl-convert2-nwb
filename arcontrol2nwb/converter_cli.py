@@ -15,7 +15,7 @@ try:
         EventsTable,
         StateTypesTable,
         StatesTable,
-        # TrialsTable,
+        TrialsTable,
         ActionTypesTable,
         ActionsTable,
         TaskArgumentsTable)
@@ -114,8 +114,6 @@ def arc2dict(arc_data_filename: str,
 
     # Add the task schema
     MAT['info']['task_schema'] = None   # TODO add the task schema
-
-    # TODO parse trial structure and add to the MAT dict if possible
 
     # append duration to CxSx, create component records
     __convert_cs_append_duration(MAT)
@@ -441,7 +439,12 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     )
     nwbfile.add_lab_meta_data(task)
 
-    # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well
+    # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well.
+    #      It looks like in the ARControl output, events, actions, and states can appear with the exact same
+    #      timestamps. To ensure the order of events, action, and states is preserved as they appear in the
+    #      original output, we therefore, need to add a small time delta ddt = 0.0001 to timestamps with
+    #      the same time. Is this correct? Should this already be done in parse(...)?
+
     # define the events table
     # reformat the events data to flatten the per-event-type timestamp arrays to a single list of timestamps
     event_types = []
@@ -527,6 +530,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
 
     # define the states table
     # reformat the states data to flatten the per-state-type timestamp arrays to a single list of timestamps
+    trials = [] # List of tuples with (component_name, start_time, stop_time)
     state_types = []
     state_start_times = []
     state_stop_times = []
@@ -534,9 +538,16 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     for state_name, state_times in cs_events.items():
         state_index = state_name_index[state_name]
         for timerange in state_times:
-            state_types.append(state_index)
-            state_start_times.append(timerange[0] + time_offset)
-            state_stop_times.append(timerange[0] + timerange[1] + time_offset)
+            start_time = timerange[0] + time_offset
+            stop_time = timerange[0] + timerange[1] + time_offset
+            if 'S' in state_name:
+                state_types.append(state_index)
+                state_start_times.append(start_time)
+                state_stop_times.append(stop_time)
+            else:
+                # I.e., if we have a component (e.g., C2) without state name (e.g., C2S1) then add
+                # the component to the trials table instead of keeping it as a state
+                trials.append((state_name, start_time, stop_time))
     # sort the states data
     sort_states = np.argsort(state_start_times)
     state_start_times = np.array(state_start_times)[sort_states]
@@ -561,12 +572,55 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     )
     nwbfile.add_acquisition(states_table)
 
-    # noqa TODO define and populate the TrialsTable. Trials should be defined by transitions between components indicated by the prefix of the name of the state
-    # trials = TrialsTable(description="ARControl behavioral trials ",
-    #                      states_table=states_table,
-    #                      events_table=events_table,
-    #                      actions_table=actions_table)
-    # nwbfile.trials = trials  # TODO check that there is no existing trials table that we should append to
+    # create the trials table.
+    # Here we treat components in ARControl as trials
+    trials_table = TrialsTable(description="ARControl behavioral trials ",
+                               states_table=states_table,
+                               events_table=events_table,
+                               actions_table=actions_table)
+    # iterate through trials sorted by starting time
+    curr_event_start_index = 0
+    curr_event_end_index = 0
+    curr_action_start_index = 0
+    curr_action_end_index = 0
+    curr_state_start_index = 0
+    curr_state_end_index = 0
+    for component_name, start_time, stop_time in sorted(trials, key=lambda t: t[1]):
+        # Find the end index for the actions, events, and states within the trial
+        for i in range(curr_event_start_index, len(event_timestamps)):
+            if event_timestamps[i] >= stop_time:
+                curr_event_end_index = i
+                break
+        for i in range(curr_action_start_index, len(action_timestamps)):
+            if action_timestamps[i] >= stop_time:
+                curr_action_end_index = i
+                break
+        for i in range(curr_state_start_index, len(state_start_times)):
+            if state_start_times[i] > stop_time:
+                curr_state_end_index = i
+                break
+        # if the trial ended later than the last event, action, state, then set end index to the last one
+        if curr_event_end_index is None:
+            curr_event_end_index = len(event_timestamps)
+        if curr_action_end_index is None:
+            curr_action_end_index = len(action_timestamps)
+        if curr_state_end_index is None:
+            curr_state_end_index = len(state_start_times)
+        # Add the trial to the TrialsTable
+        trials_table.add_trial(start_time=start_time,
+                               stop_time=stop_time,
+                               states=list(range(curr_state_start_index, curr_state_end_index)),
+                               events=list(range(curr_event_start_index, curr_event_end_index)),
+                               actions=list(range(curr_action_start_index, curr_action_end_index)))
+        # updated start/stop indices for the next iteration
+        curr_action_start_index = curr_action_end_index
+        curr_action_end_index = None
+        curr_event_start_index = curr_event_end_index
+        curr_event_end_index = None
+        curr_state_start_index = curr_state_end_index
+        curr_state_end_index = None
+
+    nwbfile.trials = trials_table
 
 
 def savenwb(MAT: dict,
