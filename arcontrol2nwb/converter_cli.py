@@ -29,6 +29,10 @@ from pynwb import (
     TimeSeries,
     NWBHDF5IO)
 from pynwb.behavior import BehavioralEvents
+from hdmf.common.table import (
+    VectorData,
+    DynamicTableRegion
+)
 
 """
 Convert arcontrol_data.TXT to arcontrol_data.MAT. Just like "BF_arc2mat.m".
@@ -78,7 +82,6 @@ def parse(arc_data_filename: str):
             style, nums = res_expression[0]
             nums_list = eval('[' + nums.replace(' ', ', ') + ']')
             MAT.setdefault(style, []).append(nums_list)
-
     return MAT
 
 
@@ -439,47 +442,123 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     nwbfile.add_lab_meta_data(task)
 
     # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well
-    # TODO sort events_table, actions_table, and states_table by timestamps
     # define the events table
-    events_table = EventsTable(
-        description="ARControl input events acquired during the experiment",
-        event_types_table=event_types_table)
-    events_table.add_column(name='duration', description='ARControl input event duration')
+    # reformat the events data to flatten the per-event-type timestamp arrays to a single list of timestamps
+    event_types = []
+    event_values = []
+    event_timestamps = []
+    event_durations = []
     event_name_index = {e: i for i, e in enumerate(event_types_table['event_name'])}
     for event_name, event_times in io_in_events.items():
         event_index = event_name_index[event_name]
         for timerange in event_times:
-            events_table.add_row(event_type=event_index, value="",
-                                 timestamp=timerange[0] + time_offset,
-                                 duration=timerange[1])
+            event_types.append(event_index)
+            event_values.append("")
+            event_timestamps.append(timerange[0] + time_offset)
+            event_durations.append(timerange[1])
+    # sort event data in time
+    sort_events = np.argsort(event_timestamps)
+    event_types = np.array(event_types)[sort_events]
+    event_values = np.array(event_values)[sort_events]
+    event_timestamps = np.array(event_timestamps)[sort_events]
+    event_durations = np.array(event_durations)[sort_events]
+    # create the EventsTable and add it to the NWBFile
+    events_table = EventsTable(
+        description="ARControl input events acquired during the experiment",
+        event_types_table=event_types_table,
+        columns=[VectorData(name="timestamp",
+                            data=event_timestamps,
+                            description="The time that the event occurred, in seconds."),
+                 DynamicTableRegion(name="event_type",
+                                    data=event_types,
+                                    table=event_types_table,
+                                    description="The type of event that occurred on each trial. This"
+                                                "is represented as a reference  to a row of the EventTypesTable."),
+                 VectorData(name="value",
+                            data=event_values,
+                            description="The value of the event"),
+                 VectorData(name="duration",
+                            data=np.asarray(event_durations, dtype='float32'),
+                            description="ARControl duration of the input event")]
+    )
     nwbfile.add_acquisition(events_table)
 
     # define the actions table
-    actions_table = ActionsTable(
-        description="ARControl output actions acquired during the experiment",
-        action_types_table=action_types_table)
-    actions_table.add_column(name='duration', description='ARControl output actions duration')
+    # reformat the events data to flatten the per-action-type timestamp arrays to a single list of timestamps
+    action_types = []
+    action_values = []
+    action_timestamps = []
+    action_durations = []
     action_name_index = {a: i for i, a in enumerate(action_types_table['action_name'])}
     for action_name, action_times in io_out_actions.items():
         action_index = action_name_index[action_name]
         for timerange in action_times:
-            actions_table.add_row(action_type=action_index,
-                                  value="",  # TODO does ARControl define values for output actions?
-                                  timestamp=timerange[0] + time_offset,
-                                  duration=timerange[1])
+            action_types.append(action_index)
+            action_values.append("")
+            action_timestamps.append(timerange[0] + time_offset)
+            action_durations.append(timerange[1])
+    # sort the action data
+    sort_actions = np.argsort(action_timestamps)
+    action_types = np.array(action_types)[sort_actions]
+    action_values = np.array(action_values)[sort_actions]
+    action_timestamps = np.array(action_timestamps)[sort_actions]
+    action_durations = np.array(action_durations)[sort_actions]
+    # create the ActionTable and add it to the NWBFile
+    actions_table = ActionsTable(
+        description="ARControl output actions acquired during the experiment",
+        action_types_table=action_types_table,
+        columns=[VectorData(name="timestamp",
+                            data=action_timestamps,
+                            description="The time that the action occurred, in seconds."),
+                 DynamicTableRegion(name="action_type",
+                                    data=action_types,
+                                    table=action_types_table,
+                                    description="The type of action that occurred on each trial. This"
+                                                "is represented as a reference  to a row of the EventTypesTable."),
+                 VectorData(name="value",
+                            data=action_values,
+                            description="The value of the action"),
+                 VectorData(name="duration",
+                            data=np.asarray(action_durations, dtype='float32'),
+                            description="ARControl duration of the output action.")]
+
+    )
     nwbfile.add_acquisition(actions_table)
 
     # define the states table
-    states_table = StatesTable(
-        description="ARControl states  acquired during the experiment",
-        state_types_table=state_types_table)
+    # reformat the states data to flatten the per-state-type timestamp arrays to a single list of timestamps
+    state_types = []
+    state_start_times = []
+    state_stop_times = []
     state_name_index = {e: i for i, e in enumerate(state_types_table['state_name'])}
     for state_name, state_times in cs_events.items():
         state_index = state_name_index[state_name]
         for timerange in state_times:
-            states_table.add_row(state_type=state_index,
-                                 start_time=timerange[0] + time_offset,
-                                 stop_time=timerange[0] + timerange[1])
+            state_types.append(state_index)
+            state_start_times.append(timerange[0] + time_offset)
+            state_stop_times.append(timerange[0] + timerange[1] + time_offset)
+    # sort the states data
+    sort_states = np.argsort(state_start_times)
+    state_start_times = np.array(state_start_times)[sort_states]
+    state_stop_times = np.array(state_stop_times)[sort_states]
+    state_types = np.array(state_types)[sort_states]
+    # create the StatesTable and it to the NWBFile
+    states_table = StatesTable(
+        description="ARControl states  acquired during the experiment",
+        state_types_table=state_types_table,
+        columns=[VectorData(name="start_time",
+                            data=state_start_times,
+                            description="The time that state started, in seconds."),
+                 VectorData(name="stop_time",
+                            data=state_stop_times,
+                            description="The time that state stopped, in seconds."),
+                 DynamicTableRegion(name="state_type",
+                                    data=state_types,
+                                    table=state_types_table,
+                                    description="The type of state that occurred on each trial. "
+                                                "This is represented as a reference to a row "
+                                                "of the StateTypesTable.")]
+    )
     nwbfile.add_acquisition(states_table)
 
     # noqa TODO define and populate the TrialsTable. Trials should be defined by transitions between components indicated by the prefix of the name of the state
