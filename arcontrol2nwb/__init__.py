@@ -1,1 +1,1 @@
-from .converter_cli import convert  # noqa F401
+from .converter_cli import convert, arc2dict  # noqa F401
