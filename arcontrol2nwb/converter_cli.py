@@ -67,7 +67,7 @@ def parse(arc_data_filename: str):
         res_arcbg = re.findall(expression_arcbg, str)
         if res_header:
             style, comment = res_header[0]
-            MAT['info'][style] = comment
+            MAT['info'][style] = {'label': comment}
         elif res_taskname:
             MAT['info']['task'] = res_taskname[0]
         elif res_arcbg:
@@ -87,7 +87,8 @@ def parse(arc_data_filename: str):
 
 
 def arc2dict(arc_data_filename: str,
-             arc_taskprogram_aconf: str = None):
+             arc_taskprogram_aconf: str = None,
+             arc_taskprogram_json: str = None):
     """
     Convert arcontrol_data.TXT to a data dictionary.
 
@@ -96,6 +97,7 @@ def arc2dict(arc_data_filename: str,
 
     :param arc_data_filename: Name of the arcontrol output txt data file
     :param arc_taskprogram_aconf: Path to the ARControl task program (Optional)
+     :param arc_taskprogram_json: Path to the ARControl task program JSON definition file (Optional)
 
     :return: Dict containing: 1) 'info' key with a dict of all the states and events
              and their corresponding description, 2) keys of all the events an states
@@ -119,6 +121,23 @@ def arc2dict(arc_data_filename: str,
     # append duration to CxSx, create component records
     __convert_cs_append_duration(MAT)
     __convert_c_create(MAT)
+
+    # Parse the JSON to annotate the states
+    if arc_taskprogram_json is not None:
+        with open(arc_taskprogram_json) as json_file:
+            MAT['info']['task_program_dict'] = json.load(json_file)
+
+        # Annotate the states based on the data from the JSON
+        def annotate_states(in_states):
+            for state in in_states:
+                if MAT['info'].get(state['name'], None) is None:
+                    MAT['info'][state['name']] = {'label': state.get('label', None)}
+                MAT['info'][state['name']]['type'] = state.get('type', None)
+                MAT['info'][state['name']]['actions'] = str(state['actions']) if 'actions' in state else None
+                # recurse if necessary
+                if state.get('statemachine', None) is not None:
+                    annotate_states(in_states=state['statemachine']['states'])
+        annotate_states(in_states=MAT['info']['task_program_dict']['states'])
 
     return MAT
 
@@ -157,11 +176,8 @@ def convert(
     :return: Path of the nwb
     """
     MAT = arc2dict(arc_data_filename=arc_data_filename,
-                   arc_taskprogram_aconf=arc_taskprogram_aconf)
-
-    if arc_taskprogram_json is not None:
-        with open(arc_taskprogram_json) as json_file:
-            MAT['info']['task_program_dict'] = json.load(json_file)
+                   arc_taskprogram_aconf=arc_taskprogram_aconf,
+                   arc_taskprogram_json=arc_taskprogram_json)
 
     # save to file #
     filename = nwb_filename if nwb_filename is not None else os.path.splitext(arc_data_filename)[0] + '.nwb'
@@ -201,7 +217,7 @@ def __convert_cs_append_duration(MAT: dict):
         csdata_dict[e] = np.stack([t_bg, t_dur]).T
 
     MAT.update(csdata_dict)
-    MAT['info'].setdefault('C0S0', 'End session')
+    MAT['info'].setdefault('C0S0', {'label': 'End session'})
 
 
 def __convert_c_create(MAT: dict):
@@ -250,7 +266,7 @@ def __convert_c_create(MAT: dict):
         cdata_dict[comp_name] = comp_bg_dur
 
     MAT.update(cdata_dict)
-    MAT['info'].setdefault('C0', 'End session')
+    MAT['info'].setdefault('C0', {'label': 'End session'})
 
 
 def add_arc_to_nwbfile(
@@ -309,6 +325,7 @@ def add_arc_to_nwbfile(
     if use_ndx_beadl:
         __add_arc_to_nwbfile_ndx_beadl(
             nwbfile=nwbfile,
+            has_task_json='task_program_dict' in MAT['info'],
             task_schema=task_schema,
             task_program=task_program,
             state_types=state_types,
@@ -378,8 +395,8 @@ def __add_arc_to_nwbfile_behavioral_series(nwbfile: NWBFile,
             name=e,
             data=data,
             timestamps=timestamps,
-            comments=info[e],
-            description=info[e],
+            comments=info[e]['label'],
+            description=info[e]['label'],
             unit="TTL",
         )
         behavioral_events.add_timeseries(time_series)
@@ -388,6 +405,7 @@ def __add_arc_to_nwbfile_behavioral_series(nwbfile: NWBFile,
 
 
 def __add_ndx_beadl_task(nwbfile: NWBFile,
+                         has_task_json: bool,
                          task_schema: str,
                          task_program: str,
                          state_types: dict,
@@ -397,6 +415,7 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
     Add the ndx_beadl Task
 
     :param nwbfile: The NWBFile object ot add the data to
+    :param has_task_json: Boolean indicating whether a ARControl JSON was provided to annotate states
     :param task_schema: The string with the XML task schema (or None)
     :param task_program: The string with the XML task program (or None)
     :param state_types: Dictionary with all the state types
@@ -428,20 +447,30 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
     # define the state types table
     state_types_table = StateTypesTable(description="ARControl control states")
     state_types_table.add_column(name='state_label', description='ARControl control state label')
-    for state_name, state_label in state_types.items():
-        state_types_table.add_row(state_name=state_name, state_label=state_label)
+    if has_task_json:
+        state_types_table.add_column(name='state_type', description='ARControl control state type')
+        state_types_table.add_column(name='state_actions', description='ARControl actions associated with the state')
+    for state_name, state_meta in state_types.items():
+        if has_task_json:
+            state_types_table.add_row(state_name=state_name,
+                                      state_label=state_meta['label'] if 'label' in state_meta else '',
+                                      state_type=state_meta['type'] if 'type' in state_meta else '',
+                                      state_actions=state_meta['actions'] if 'acions' in state_meta else '')
+        else:
+            state_types_table.add_row(state_name=state_name,
+                                      state_label=state_meta['label'] if 'label' in state_meta else '')
 
     # define the events types table
     event_types_table = EventTypesTable(description="ARControl input events")
     event_types_table.add_column(name='event_label', description='ARControl event label')
-    for event_name, event_label in event_types.items():
-        event_types_table.add_row(event_name=event_name, event_label=event_label)
+    for event_name, event_meta in event_types.items():
+        event_types_table.add_row(event_name=event_name, event_label=event_meta['label'])
 
     # define the actions types table
     action_types_table = ActionTypesTable(description="ARControl output actions")
-    action_types_table.add_column(name='action_label', description='ARControl ouput actions label')
-    for action_name, action_label in action_types.items():
-        action_types_table.add_row(action_name=action_name, action_label=action_label)
+    action_types_table.add_column(name='action_label', description='ARControl output actions label')
+    for action_name, action_meta in action_types.items():
+        action_types_table.add_row(action_name=action_name, action_label=action_meta['label'])
 
     # define the task
     task = Task(
@@ -589,7 +618,6 @@ def __add_ndx_beadl_states(nwbfile: NWBFile,
     """
     # define the states table
     # reformat the states data to flatten the per-state-type timestamp arrays to a single list of timestamps
-    trials = []  # List of tuples with (component_name, start_time, stop_time)
     state_types = []
     state_start_times = []
     state_stop_times = []
@@ -599,14 +627,13 @@ def __add_ndx_beadl_states(nwbfile: NWBFile,
         for timerange in state_times:
             start_time = timerange[0] + time_offset
             stop_time = timerange[0] + timerange[1] + time_offset
+            # If we have a component (e.g., C2) without state name (e.g., C2S1) then add
+            # the component to the trials table instead of keeping it as a state
             if 'S' in state_name:
                 state_types.append(state_index)
                 state_start_times.append(start_time)
                 state_stop_times.append(stop_time)
-            else:
-                # I.e., if we have a component (e.g., C2) without state name (e.g., C2S1) then add
-                # the component to the trials table instead of keeping it as a state
-                trials.append((state_name, start_time, stop_time))
+
     # sort the states data
     sort_states = np.argsort(state_start_times)
     state_start_times = np.array(state_start_times)[sort_states]
@@ -721,6 +748,7 @@ def __add_ndx_beadl_trials(nwbfile: NWBFile,
 
 
 def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
+                                   has_task_json: bool,
                                    task_schema: str,
                                    task_program: str,
                                    state_types: dict,
@@ -734,6 +762,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     Add the data to the NWBFile using the NDX BEADL extension
 
     :param nwbfile: The NWBFile object ot add the data to
+    :param has_task_json: Boolean indicating whether a ARControl JSON was provided to annotate states
     :param task_schema: The string with the XML task schema (or None)
     :param task_program: The string with the XML task program (or None)
     :param state_types: Dictionary with all the state types
@@ -751,6 +780,7 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
 
     task = __add_ndx_beadl_task(
         nwbfile=nwbfile,
+        has_task_json=has_task_json,
         task_schema=task_schema,
         task_program=task_program,
         state_types=state_types,
