@@ -116,7 +116,7 @@ def arc2dict(arc_data_filename: str,
             MAT['info']['task_program_xml'] = f.read()
 
     # Add the task schema
-    MAT['info']['task_xml_schema'] = None   # TODO add the task schema
+    MAT['info']['task_xml_schema'] = None   # TODO add the task schema if ARControl has a schema for its XML file
 
     # append duration to CxSx, create component records
     __convert_cs_append_duration(MAT)
@@ -429,7 +429,7 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
     task_schema = TaskSchema(
         name='task_schema',
         data=task_schema if task_schema is not None else "",
-        version="0.1.0",
+        version="0.1.0",  # TODO set correct version if there is ARControl has a task schema defintion
         language="XSD"
     )
 
@@ -442,7 +442,7 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
     )
 
     # Define task arguments
-    task_arg_table = TaskArgumentsTable()  # TODO: Populate the TaskArgumentsTable
+    task_arg_table = TaskArgumentsTable()  # TODO: Populate the TaskArgumentsTable if appropriate
 
     # define the state types table
     state_types_table = StateTypesTable(description="ARControl control states")
@@ -791,10 +791,11 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     action_types_table = task.action_types
     state_types_table = task.state_types
 
-    # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well.
+    # TODO Check if additional timestamp transformation from (lines 374 - 392) in the for loop in
+    #      __add_arc_to_nwbfile_behavioral_series need to be applied here as well.
     #      It looks like in the ARControl output, events, actions, and states can appear with the exact same
     #      timestamps. To ensure the order of events, action, and states is preserved as they appear in the
-    #      original output, we therefore, need to add a small time delta ddt = 0.0001 to timestamps with
+    #      original output, we may need to add a small time delta ddt = 0.0001 to timestamps with
     #      the same time. Is this correct? Should this already be done in parse(...)?
 
     # Add the EventsTable with the event recordings
@@ -857,7 +858,7 @@ def savenwb(MAT: dict,
     :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension
     """
     session_start_time = MAT['info']['session_start_time']
-    task_name = MAT['info']['task']  # TODO: where to save task_name if NWBFile exists (append to session description?)
+    task_name = MAT['info']['task']
 
     # Open the existing NWB file or create a new NWB file for write
     # Append to an existing NWB file
