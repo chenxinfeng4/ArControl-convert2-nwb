@@ -3,6 +3,7 @@ import sys
 import os
 import re
 import warnings
+import argparse
 import json
 
 import numpy as np
@@ -889,6 +890,35 @@ def savenwb(MAT: dict,
 
 if __name__ == '__main__':
     # TODO update the CLI to allow specification of acconf and json file and other convert options
-    filetxts = sys.argv[1:]
-    for filetxt in filetxts:
-        convert(filetxt)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("arc_data_filename", help="Input arc_data_filename path", type=str)
+    parser.add_argument("--arc_taskprogram_aconf", help="ArControl task aconf file. Default is None. (Optional)", type=str)
+    parser.add_argument("--arc_taskprogram_json", help="ArControl task json file. Default is None. (Optional)", type=str)
+    parser.add_argument("--nwb_filename", type=str)
+    parser.add_argument("--append_to_nwb_file", action="store_true")
+    parser.add_argument("--disable_behavioral_time_series", action="store_true")
+    parser.add_argument("--disable_ndx_beadl", action="store_true")
+
+    args = parser.parse_args()
+
+    assert os.path.isfile(args.arc_data_filename), 'Data file not found.'
+    assert os.path.splitext(args.arc_data_filename)[1] == ".txt", "Data filename not valid."
+    if args.nwb_filename:
+        if args.append_to_nwb_file:
+            assert os.path.isfile(args.nwb_filename), 'Data file not found.'
+    else:
+        assert not args.append_to_nwb_file, "The nwb_filename is not defined"
+    
+    if (not NDX_BEADL_AVAILABLE) and (not args.disable_ndx_beadl):
+        args.disable_ndx_beadl = True
+        warnings("Will not use BEADL.")
+    
+    convert(
+        arc_data_filename=args.arc_data_filename,
+        arc_taskprogram_aconf=args.arc_taskprogram_aconf,
+        arc_taskprogram_json=args.arc_taskprogram_json,
+        nwb_filename=args.nwb_filename,
+        append_to_nwb_file=args.append_to_nwb_file,
+        use_behavioral_time_series=not args.disable_behavioral_time_series,
+        use_ndx_beadl = not args.disable_ndx_beadl
+    )
