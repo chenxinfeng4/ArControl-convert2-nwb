@@ -888,6 +888,7 @@ def savenwb(MAT: dict,
 
 
 if __name__ == '__main__':
+    # TODO update the CLI to allow specification of acconf and json file and other convert options
     filetxts = sys.argv[1:]
     for filetxt in filetxts:
         convert(filetxt)
