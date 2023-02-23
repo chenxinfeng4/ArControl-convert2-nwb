@@ -3,6 +3,7 @@ import sys
 import os
 import re
 import warnings
+import json
 
 import numpy as np
 from datetime import datetime
@@ -86,7 +87,7 @@ def parse(arc_data_filename: str):
 
 
 def arc2dict(arc_data_filename: str,
-             arc_taskprogram_filename: str = None):
+             arc_taskprogram_aconf: str = None):
     """
     Convert arcontrol_data.TXT to a data dictionary.
 
@@ -94,7 +95,7 @@ def arc2dict(arc_data_filename: str,
     __convert_cs_append_duration and __convert_c_create functions and the session_start_time is added.
 
     :param arc_data_filename: Name of the arcontrol output txt data file
-    :param arc_taskprogram_filename: Path to the ARControl task program (Optional)
+    :param arc_taskprogram_aconf: Path to the ARControl task program (Optional)
 
     :return: Dict containing: 1) 'info' key with a dict of all the states and events
              and their corresponding description, 2) keys of all the events an states
@@ -104,16 +105,16 @@ def arc2dict(arc_data_filename: str,
     MAT = parse(arc_data_filename)
 
     # session start time
-    MAT['session_start_time'] = get_session_start_time(arc_data_filename=arc_data_filename)
+    MAT['info']['session_start_time'] = get_session_start_time(arc_data_filename=arc_data_filename)
 
     # Add the task program
-    MAT['info']['task_program'] = None
-    if arc_taskprogram_filename is not None:
-        with open(arc_taskprogram_filename) as f:
-            MAT['info']['task_program'] = f.read()
+    MAT['info']['task_program_xml'] = None
+    if arc_taskprogram_aconf is not None:
+        with open(arc_taskprogram_aconf) as f:
+            MAT['info']['task_program_xml'] = f.read()
 
     # Add the task schema
-    MAT['info']['task_schema'] = None   # TODO add the task schema
+    MAT['info']['task_xml_schema'] = None   # TODO add the task schema
 
     # append duration to CxSx, create component records
     __convert_cs_append_duration(MAT)
@@ -135,7 +136,8 @@ def get_session_start_time(arc_data_filename: str):
 
 def convert(
         arc_data_filename: str,
-        arc_taskprogram_filename: str = None,
+        arc_taskprogram_aconf: str = None,
+        arc_taskprogram_json: str = None,
         nwb_filename: str = None,
         append_to_nwb_file: bool = False,
         use_behavioral_time_series: bool = not NDX_BEADL_AVAILABLE,
@@ -144,7 +146,8 @@ def convert(
     Convert an ARControl recording to NWB
 
     :param arc_data_filename: Path to the  arcontrol_data.TXT data file
-    :param arc_taskprogram_filename: Path to the ARControl task program
+    :param arc_taskprogram_aconf: Path to the ARControl task program aconf XML file
+    :param arc_taskprogram_json: Path to the ARControl task program JSON definition file
     :param nwb_filename: Name of the NWB file to write. If None, then the NWB file will be named
                      according to the arc_data_filename, i.e, arc_data_filename.replace('txt', 'nwb').
     :param append_to_nwb_file: If the NWB file exists, should we append to it (True) or overwrite the file (False)
@@ -154,7 +157,11 @@ def convert(
     :return: Path of the nwb
     """
     MAT = arc2dict(arc_data_filename=arc_data_filename,
-                   arc_taskprogram_filename=arc_taskprogram_filename)
+                   arc_taskprogram_aconf=arc_taskprogram_aconf)
+
+    if arc_taskprogram_json is not None:
+        with open(arc_taskprogram_json) as json_file:
+            MAT['info']['task_program_dict'] = json.load(json_file)
 
     # save to file #
     filename = nwb_filename if nwb_filename is not None else os.path.splitext(arc_data_filename)[0] + '.nwb'
@@ -268,10 +275,10 @@ def add_arc_to_nwbfile(
     if not use_ndx_beadl and not use_behavioral_time_series:
         raise ValueError("Either use_ndx_beadl and/or use_behavioral_time_series must be set to True")
 
-    session_start_time = MAT['session_start_time']
+    session_start_time = MAT['info']['session_start_time']
     # task_name = MAT['info']['task']
-    task_program = MAT['info']['task_program']
-    task_schema = MAT['info']['task_schema']
+    task_program = MAT['info']['task_program_xml']
+    task_schema = MAT['info']['task_xml_schema']
 
     io_in_events = {IO: np.array(v) / 1000 for IO, v in MAT.items()
                     if 'IN' in IO}  # process input IO time as sec
@@ -380,18 +387,24 @@ def __add_arc_to_nwbfile_behavioral_series(nwbfile: NWBFile,
     behavior_module.add(behavioral_events)
 
 
-def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
-                                   task_schema: str,
-                                   task_program: str,
-                                   state_types: dict,
-                                   event_types: dict,
-                                   action_types: dict,
-                                   io_in_events: dict,
-                                   io_out_actions: dict,
-                                   cs_events: dict,
-                                   time_offset: float):
+def __add_ndx_beadl_task(nwbfile: NWBFile,
+                         task_schema: str,
+                         task_program: str,
+                         state_types: dict,
+                         event_types: dict,
+                         action_types: dict):
     """
-    Add the data to the NWBFile using the NDX BEADL extension
+    Add the ndx_beadl Task
+
+    :param nwbfile: The NWBFile object ot add the data to
+    :param task_schema: The string with the XML task schema (or None)
+    :param task_program: The string with the XML task program (or None)
+    :param state_types: Dictionary with all the state types
+    :param event_types: Dictionary with all the event types
+    :param action_types: Dictionary with all the action types
+
+    :returns: Task object created and added to the nwbfile
+
     """
     # Define the task schema
     task_schema = TaskSchema(
@@ -441,12 +454,23 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     )
     nwbfile.add_lab_meta_data(task)
 
-    # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well.
-    #      It looks like in the ARControl output, events, actions, and states can appear with the exact same
-    #      timestamps. To ensure the order of events, action, and states is preserved as they appear in the
-    #      original output, we therefore, need to add a small time delta ddt = 0.0001 to timestamps with
-    #      the same time. Is this correct? Should this already be done in parse(...)?
+    return task
 
+
+def __add_ndx_beadl_events(nwbfile: NWBFile,
+                           event_types_table: EventTypesTable,
+                           io_in_events: dict,
+                           time_offset: float):
+    """
+    Add the EventsTable data to the NWBFile using the NDX BEADL extension
+
+    :param nwbfile: The NWBFile object ot add the data to
+    :param event_types_table: The EventTypesTable from the nwbfile to link to
+    :param io_in_events: Dictionary with all io input events
+    :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+
+    :return: EventsTable generate and added to the nwbfile
+    """
     # define the events table
     # reformat the events data to flatten the per-event-type timestamp arrays to a single list of timestamps
     event_types = []
@@ -486,8 +510,25 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
                             data=np.asarray(event_durations, dtype='float32'),
                             description="ARControl duration of the input event")]
     )
+    # add the events table to the file and return
     nwbfile.add_acquisition(events_table)
+    return events_table
 
+
+def __add_ndx_beadl_actions(nwbfile: NWBFile,
+                            action_types_table: ActionTypesTable,
+                            io_out_actions: dict,
+                            time_offset: float):
+    """
+    Add the ActinsTable data to the NWBFile using the NDX BEADL extension
+
+    :param nwbfile: The NWBFile object ot add the data to
+    :param event_types_table: The EventTypesTable from the nwbfile to link to
+    :param io_out_actions: Dictionary with all io output actions
+    :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+
+    :return: ActionsTable generate and added to the nwbfile
+    """
     # define the actions table
     # reformat the events data to flatten the per-action-type timestamp arrays to a single list of timestamps
     action_types = []
@@ -529,7 +570,23 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
 
     )
     nwbfile.add_acquisition(actions_table)
+    return actions_table
 
+
+def __add_ndx_beadl_states(nwbfile: NWBFile,
+                           state_types_table: StateTypesTable,
+                           cs_events: dict,
+                           time_offset: float):
+    """
+    Add the StatesTable data to the NWBFile using the NDX BEADL extension
+
+    :param nwbfile: The NWBFile object ot add the data to
+    :param state_types_table: The StateTypesTable from the nwbfile to link to
+    :param cs_events: Dictionary with all control states
+    :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+
+    :return: ActionsTable generate and added to the nwbfile
+    """
     # define the states table
     # reformat the states data to flatten the per-state-type timestamp arrays to a single list of timestamps
     trials = []  # List of tuples with (component_name, start_time, stop_time)
@@ -573,6 +630,30 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
                                                 "of the StateTypesTable.")]
     )
     nwbfile.add_acquisition(states_table)
+    return states_table
+
+
+def __add_ndx_beadl_trials(nwbfile: NWBFile,
+                           states_table: StatesTable,
+                           events_table: EventsTable,
+                           actions_table: ActionsTable,
+                           cs_events: dict,
+                           time_offset: float):
+    """
+    Add the TrialsTable data to the NWBFile using the NDX BEADL extension
+
+    :param nwbfile: The NWBFile object ot add the data to
+    :param states_table: The StateTable from the nwbfile
+    :param events_table: The EventsTable form the nwbfile
+    :param actions_table: The ActionsTable from the nwbfile
+    :param cs_events: Dictionary with all control states
+    :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+
+    :return: TrialsTable generate and added to the nwbfile
+    """
+    event_timestamps = events_table['timestamp']
+    action_timestamps = actions_table['timestamp']
+    state_start_times = states_table['start_time']
 
     # create the trials table.
     # Here we treat components in ARControl as trials
@@ -580,6 +661,17 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
                                states_table=states_table,
                                events_table=events_table,
                                actions_table=actions_table)
+    # Extract the trials from the states
+    trials = [(state_name,
+               timerange[0] + time_offset,  # start time
+               timerange[0] + timerange[1] + time_offset  # stop_time
+               )
+              for state_name, state_times in cs_events.items()
+              for timerange in state_times
+              # I.e., if we have a component (e.g., C2) without state name (e.g., C2S1) then add
+              # the component to the trials table instead of keeping it as a state
+              if 'S' not in state_name]
+
     # iterate through trials sorted by starting time
     curr_event_start_index = 0
     curr_event_end_index = 0
@@ -623,7 +715,96 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
         curr_state_start_index = curr_state_end_index
         curr_state_end_index = None
 
+    # TODO deal with the case where nwbfile.trials already exists and we need to add to it
     nwbfile.trials = trials_table
+    return trials_table
+
+
+def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
+                                   task_schema: str,
+                                   task_program: str,
+                                   state_types: dict,
+                                   event_types: dict,
+                                   action_types: dict,
+                                   io_in_events: dict,
+                                   io_out_actions: dict,
+                                   cs_events: dict,
+                                   time_offset: float):
+    """
+    Add the data to the NWBFile using the NDX BEADL extension
+
+    :param nwbfile: The NWBFile object ot add the data to
+    :param task_schema: The string with the XML task schema (or None)
+    :param task_program: The string with the XML task program (or None)
+    :param state_types: Dictionary with all the state types
+    :param event_types: Dictionary with all the event types
+    :param action_types: Dictionary with all the action types
+    :param io_in_events: Dictionary with all io input events
+    :param io_out_actions: Dictionary with all io output actions
+    :param cs_events: Dictionary with all control states
+    :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+
+    :returns: Tuple with all main objects added to the nwbfile by the function containing:
+              1) task, 2) event_types, 3) action_types, 4) state_types, 5) events_table,
+              6) actions_table, 7) states_table, 8) trials_table
+    """
+
+    task = __add_ndx_beadl_task(
+        nwbfile=nwbfile,
+        task_schema=task_schema,
+        task_program=task_program,
+        state_types=state_types,
+        event_types=event_types,
+        action_types=action_types)
+
+    event_types_table = task.event_types
+    action_types_table = task.action_types
+    state_types_table = task.state_types
+
+    # TODO Check if additional timestamp transformation from (lines 314 - 344) need to be applied here as well.
+    #      It looks like in the ARControl output, events, actions, and states can appear with the exact same
+    #      timestamps. To ensure the order of events, action, and states is preserved as they appear in the
+    #      original output, we therefore, need to add a small time delta ddt = 0.0001 to timestamps with
+    #      the same time. Is this correct? Should this already be done in parse(...)?
+
+    # Add the EventsTable with the event recordings
+    events_table = __add_ndx_beadl_events(
+        nwbfile=nwbfile,
+        event_types_table=event_types_table,
+        io_in_events=io_in_events,
+        time_offset=time_offset)
+
+    # Add the ActionsTable with the event recordings
+    actions_table = __add_ndx_beadl_actions(
+        nwbfile=nwbfile,
+        action_types_table=action_types_table,
+        io_out_actions=io_out_actions,
+        time_offset=time_offset)
+
+    # Add the ActionsTable with the event recordings
+    states_table = __add_ndx_beadl_states(
+        nwbfile=nwbfile,
+        state_types_table=state_types_table,
+        cs_events=cs_events,
+        time_offset=time_offset)
+
+    # Add the TrialsTable with trial definitions
+    trials_table = __add_ndx_beadl_trials(
+        nwbfile=nwbfile,
+        states_table=states_table,
+        events_table=events_table,
+        actions_table=actions_table,
+        cs_events=cs_events,
+        time_offset=time_offset)
+
+    return (task,
+            event_types,
+            action_types,
+            state_types,
+            events_table,
+            actions_table,
+            states_table,
+            trials_table)
 
 
 def savenwb(MAT: dict,
@@ -645,7 +826,7 @@ def savenwb(MAT: dict,
     :param use_behavioral_time_series: Boolean indicating whether to use behavioral timeseries to store the data
     :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension
     """
-    session_start_time = MAT['session_start_time']
+    session_start_time = MAT['info']['session_start_time']
     task_name = MAT['info']['task']  # TODO: where to save task_name if NWBFile exists (append to session description?)
 
     # Open the existing NWB file or create a new NWB file for write
