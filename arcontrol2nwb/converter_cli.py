@@ -456,7 +456,7 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
             state_types_table.add_row(state_name=state_name,
                                       state_label=state_meta['label'] if 'label' in state_meta else '',
                                       state_type=state_meta['type'] if 'type' in state_meta else '',
-                                      state_actions=state_meta['actions'] if 'acions' in state_meta else '')
+                                      state_actions=state_meta['actions'] if 'actions' in state_meta else '')
         else:
             state_types_table.add_row(state_name=state_name,
                                       state_label=state_meta['label'] if 'label' in state_meta else '')
@@ -630,7 +630,7 @@ def __add_ndx_beadl_states(nwbfile: NWBFile,
             stop_time = timerange[0] + timerange[1] + time_offset
             # If we have a component (e.g., C2) without state name (e.g., C2S1) then add
             # the component to the trials table instead of keeping it as a state
-            if 'S' in state_name:
+            if 'S' in state_name and state_name != 'C0S0':
                 state_types.append(state_index)
                 state_start_times.append(start_time)
                 state_stop_times.append(stop_time)
@@ -698,7 +698,7 @@ def __add_ndx_beadl_trials(nwbfile: NWBFile,
               for timerange in state_times
               # I.e., if we have a component (e.g., C2) without state name (e.g., C2S1) then add
               # the component to the trials table instead of keeping it as a state
-              if 'S' not in state_name]
+              if 'S' not in state_name and state_name != 'C0']
 
     # iterate through trials sorted by starting time
     curr_event_start_index = 0
