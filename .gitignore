@@ -38,3 +38,15 @@ dist
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Jupyte notebooks   #
+######################
+.ipynb_checkpoints/
+
+# PyCharm            #
+######################
+.idea
+
+# NWB files          #
+######################
+*.nwb
