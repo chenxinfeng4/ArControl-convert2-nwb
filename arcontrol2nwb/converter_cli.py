@@ -1,4 +1,4 @@
-# python BF_arc2nwb.py 2022-1113-224711.txt
+# python -m arcontrol2nwb "Arcontrol/data/A/B/2022-1113-224711.txt" 
 import sys
 import os
 import re
@@ -25,6 +25,17 @@ try:
 except ImportError:
     NDX_BEADL_AVAILABLE = False
     warnings.warn("ndx-beadl not installed.")
+    print("pip install -U git+https://github.com/rly/ndx-beadl.git")
+    Task = None
+    TaskSchema = None
+    EventTypesTable = None
+    EventsTable = None
+    StateTypesTable = None
+    StatesTable = None
+    TrialsTable = None
+    ActionTypesTable = None
+    ActionsTable = None
+    TaskArgumentsTable = None
 from pynwb.epoch import TimeIntervals
 from pynwb import (
     NWBFile,
@@ -373,20 +384,24 @@ def __add_arc_to_nwbfile_behavioral_series(nwbfile: NWBFile,
     _ = nwbfile.add_time_intervals(s1)
 
     for e, v in world_event.items():
-        tbg_pre, tend = v[:, 0], v[:, 0] + v[:, 1]
+        tbg, tend = v[:, 0], v[:, 0] + v[:, 1]
         ddt = 0.0001
-        tend[tend == tbg_pre] += ddt
-        tbg = tbg_pre + ddt
-        tend_post = tend + ddt
-        seq_t_1 = np.concatenate((tbg, tend))
-        seq_t_0 = np.concatenate((tbg_pre, tend_post))
-        seq_v_1 = np.ones(seq_t_1.shape)
-        seq_v_0 = np.zeros(seq_t_0.shape)
-        seq_t = np.concatenate((seq_t_0, seq_t_1, [time_len + ddt]))
-        seq_v = np.concatenate((seq_v_0, seq_v_1, [0]))
-        if not np.any(seq_t == 0.0):
-            seq_t = np.append(seq_t, 0.0)
-            seq_v = np.append(seq_v, 0)
+        seq_t, seq_v = [], []
+
+        for tbg_now, tend_now in zip(tbg, tend):
+            seq_t.extend([tbg_now, tbg_now + ddt, tend_now, tend_now + ddt])
+            seq_v.extend([0, 1, 1, 0])
+
+        # insert (x=0.0, y=0) in the beginning
+        if 0.0 not in seq_t:
+            seq_t.insert(0, 0.0)
+            seq_v.insert(0, 0)
+        # insert (x=END, y=0) in the end
+        seq_t.append(time_len + ddt)
+        seq_v.append(0)
+        seq_v = np.array(seq_v)
+        seq_t = np.array(seq_t)
+        assert np.all(seq_t>=0)
 
         argind = np.argsort(seq_t)
         timestamps = seq_t[argind] + time_offset
@@ -911,7 +926,7 @@ if __name__ == '__main__':
     
     if (not NDX_BEADL_AVAILABLE) and (not args.disable_ndx_beadl):
         args.disable_ndx_beadl = True
-        warnings("Will not use BEADL.")
+        warnings.warn("Will not use BEADL.")
     
     convert(
         arc_data_filename=args.arc_data_filename,
